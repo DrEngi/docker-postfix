@@ -1,10 +1,22 @@
 #!/usr/bin/env bash
-
+set -e
 # Do a multistage build
 
 export DOCKER_BUILDKIT=1
 export DOCKER_CLI_EXPERIMENTAL=enabled
 export BUILDKIT_PROGRESS=plain
+
+declare cache_dir
+declare arg_list
+
+if [[ "$CI" == "true" ]]; then
+    if [[ -f "/tmp/.buildx-cache/alpine/index.json" ]]; then
+        arg_list="$arg_list --cache-from type=local,src=/tmp/.buildx-cache/alpine/index.json"
+    fi
+fi
+
+cache_from="$( cd -- "$(dirname "$0")" >/dev/null 2>&1 ; pwd -P )/cache"
+cache_to="${cache_from}"
 
 if ! docker buildx inspect multiarch > /dev/null; then
     docker buildx create --name multiarch
@@ -18,9 +30,16 @@ if [[ "$*" == *--push* ]]; then
     fi
 fi
 
-if [[ -z "$PLATFORMS" ]]; then
-    PLATFORMS="linux/amd64,linux/arm64,linux/arm/v7"
+arg_list=" --cache-to type=local,dest=${cache_to}"
+if [[ -f "${cache_from}/index.json" ]]; then
+    arg_list="$arg_list --cache-from type=local,src=${cache_from}"
+else
+    mkdir -p "${cache_from}"
 fi
 
-docker buildx build --platform $PLATFORMS . $*
+#if [[ -z "$PLATFORMS" ]]; then
+#    arg_list="$arg_list --platform linux/amd64,linux/arm64,linux/arm/v7"
+#fi
+
+docker buildx build ${arg_list} . $*
 
