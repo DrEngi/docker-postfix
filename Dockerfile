@@ -65,6 +65,9 @@ COPY       /configs/opendkim.conf        /etc/opendkim/opendkim.conf
 COPY       /configs/smtp_header_checks   /etc/postfix/smtp_header_checks
 COPY       /scripts/*                    /scripts/
 
+COPY /configs/crontab /etc/crontabs/root
+RUN mkdir /var/log/cron
+
 RUN        chmod +x /scripts/*
 
 # Set up volumes
