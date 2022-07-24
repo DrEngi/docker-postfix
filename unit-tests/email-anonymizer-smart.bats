@@ -29,35 +29,31 @@ Pelé@example.com
 EOF
 
 mapfile SMART <<'EOF'
-p*e@*******.com
-v*n@*******.com
-d*l@*******.com
-o*h@*******.com
-x*x@*******.com
-\"m*l\"@*******.com
-\"v*m\"@*******.com
-\"v*l\"@***************.com
-e*d@***************.com
-a*n@***********
-#*~@*******.org
-\"(*a\"@*******.org
-\" * \"@*******.org
-e*e@*********
-e*e@*.solutions
-u*r@***
-u*r@***********
-u*r@[*.*.*.*]
-u*r@[IPv6:***********]
-P*é@*******.com
-δ*ή@**********.δοκιμή
-我*買@**.香港
-二*宮@**.日本
-м*ь@************.рф
-स*क@*******.भारत
-20211207101128.0805BA272@31bfa77a2cab
-EOF
-
-mapfile MESSAGE_IDS <<'EOF'
+p#e@#######.com
+v#n@#######.com
+d#l@#######.com
+o#h@#######.com
+x#x@#######.com
+\"m#l\"@#######.com
+\"v#m\"@#######.com
+\"v#l\"@###############.com
+e#d@###############.com
+a#n@###########
+##~@#######.org
+\"(#a\"@#######.org
+\" # \"@#######.org
+e#e@#########
+e#e@#.solutions
+u#r@###
+u#r@###########
+u#r@[#.#.#.#]
+u#r@[IPv6:###########]
+P#é@#######.com
+δ#ή@##########.δοκιμή
+我#買@##.香港
+二#宮@##.日本
+м#ь@############.рф
+स#क@#######.भारत
 20211207101128.0805BA272@31bfa77a2cab
 EOF
 
@@ -67,7 +63,7 @@ EOF
 	for index in "${!EMAILS[@]}"; do
 		email="${EMAILS[$index]}"
 		email=${email%$'\n'} # Remove trailing new line
-		result="$(echo "$email" | /code/scripts/email-anonymizer.sh smart)"
+		result="$(echo "$email" | /code/scripts/email-anonymizer.sh 'smart?mask_symbol=#')"
 		result=${result%$'\n'} # Remove trailing new line
 		expected="${SMART[$index]}"
 		expected=${expected%$'\n'}  # Remove trailing new line
@@ -80,19 +76,4 @@ EOF
 	if [[ -n "$error" ]]; then
 		exit 1
 	fi
-}
-
-@test "verify smart error for message id" {
-	local email
-	for index in "${!MESSAGE_IDS[@]}"; do
-		email="${MESSAGE_IDS[$index]}"
-		email=${email%$'\n'} # Remove trailing new line
-		result="$(echo "$email" | /code/scripts/email-anonymizer.sh smart)"
-		result=${result%$'\n'} # Remove trailing new line
-		expected='{}'
-		if [ "$result" != "$expected" ]; then
-			echo "Expected '$expected', got: '$result'" >&2
-			exit 1
-		fi
-	done
 }

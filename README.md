@@ -1,6 +1,6 @@
 # docker-postfix
 
-![Build status](https://github.com/bokysan/docker-postfix/workflows/Docker%20image/badge.svg) [![Latest commit](https://img.shields.io/github/last-commit/bokysan/docker-postfix)](https://github.com/bokysan/docker-postfix/commits/master) [![Latest release](https://img.shields.io/github/v/release/bokysan/docker-postfix?sort=semver&Label=Latest%20release)](https://github.com/bokysan/docker-postfix/releases) [![Docker image size](https://img.shields.io/docker/image-size/boky/postfix?sort=semver)](https://hub.docker.com/r/boky/postfix/) [![Docker Stars](https://img.shields.io/docker/stars/boky/postfix.svg)](https://hub.docker.com/r/boky/postfix/) [![Docker Pulls](https://img.shields.io/docker/pulls/boky/postfix.svg)](https://hub.docker.com/r/boky/postfix/) ![License](https://img.shields.io/github/license/bokysan/docker-postfix) [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fbokysan%2Fdocker-postfix.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fbokysan%2Fdocker-postfix?ref=badge_shield)
+![Build status](https://github.com/bokysan/docker-postfix/workflows/Docker%20image/badge.svg) [![Latest commit](https://img.shields.io/github/last-commit/bokysan/docker-postfix)](https://github.com/bokysan/docker-postfix/commits/master) [![Latest release](https://img.shields.io/github/v/release/bokysan/docker-postfix?sort=semver&Label=Latest%20release)](https://github.com/bokysan/docker-postfix/releases) [![Docker image size](https://img.shields.io/docker/image-size/boky/postfix?sort=semver)](https://hub.docker.com/r/boky/postfix/) ![GitHub Repo stars](https://img.shields.io/github/stars/bokysan/docker-postfix?label=GitHub%20Stars&style=flat) [![Docker Stars](https://img.shields.io/docker/stars/boky/postfix.svg?label=Docker%20Stars)](https://hub.docker.com/r/boky/postfix/) [![Docker Pulls](https://img.shields.io/docker/pulls/boky/postfix.svg)](https://hub.docker.com/r/boky/postfix/) ![License](https://img.shields.io/github/license/bokysan/docker-postfix) [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fbokysan%2Fdocker-postfix.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fbokysan%2Fdocker-postfix?ref=badge_shield)
 
 Simple postfix relay host ("postfix null client") for your Docker containers. Based on Alpine Linux.
 
@@ -27,6 +27,7 @@ Simple postfix relay host ("postfix null client") for your Docker containers. Ba
     * [POSTFIX_message_size_limit](#postfix_message_size_limit)
     * [Overriding specific postfix settings](#overriding-specific-postfix-settings)
     * [ANONYMIZE_EMAILS](#anonymize_emails)
+    * [SKIP_ROOT_SPOOL_CHOWN](#skip_root_spool_chown)
   * [DKIM / DomainKeys](#dkim--domainkeys)
     * [Supplying your own DKIM keys](#supplying-your-own-dkim-keys)
     * [Auto-generating the DKIM selectors through the image](#auto-generating-the-dkim-selectors-through-the-image)
@@ -112,7 +113,7 @@ unsuitable to link to packages with GPL-incompatible licenses. As a result Alpin
 
 While this should not affect most of the users (`/etc/postfix/main.cf` is managed by this image), there might be use cases where
 people have their own configuration which relies on `hash` and `btree` databases. To avoid braking live systems, the version of this
-image has been updated to `v3.0.0.`.
+image has been updated to `v3.0.0`.
 
 ## Architectures
 
@@ -332,7 +333,14 @@ Any Postfix [configuration option](http://www.postfix.org/postconf.5.html) can b
 environment variables, e.g. `POSTFIX_allow_mail_to_commands=alias,forward,include`. Specifying no content (empty
 variable) will remove that variable from postfix config.
 
-#### ANONYMIZE_EMAILS
+#### `SKIP_ROOT_SPOOL_CHOWN`
+
+Setting this to `1` will skip reowing in `/var/spool/postfix/` and `/var/spool/postfix/pid`. You generally do not
+want to set this option unless you're running into specific issues (e.g. [#97](https://github.com/bokysan/docker-postfix/issues/97)).
+
+If unsure, leave it as is.
+
+#### `ANONYMIZE_EMAILS`
 
 Anonymize email in Postfix logs. It mask the email content by putting `*` in the middle of the name and the domain.
 For example: `from=<a*****************s@a***********.com>`
@@ -347,10 +355,9 @@ The following filters are provided with this implementation:
 
 Enable the filter by setting `ANONYMIZE_EMAILS=smart`.
 
-The filter has no options and is enabled by setting the value to `on`, `true`, `1`, `default` or `smart`. The filter
-masker will take an educated guess at how to best mask the emails, specifically:
+The is enabled by setting the value to `on`, `true`, `1`, `default` or `smart`. The filter will take an educated guess at how to best mask the emails, specifically:
 
-* It will leave the first and the last letter of the local part (if it's oly one letter, it will get repated)
+* It will leave the first and the last letter of the local part (if the local part is one letter long it gets repeated atht beggining and the end)
 * If the local part is in quotes, it will remove the quotes (Warning: if the email starts with a space, this might look weird in logs)
 * It will replace all the letters inbetween with **ONE** asterisk, even if there are none
 * It will replace everything but a TLD with a star
@@ -364,14 +371,18 @@ E.g.:
 * `s@[192.168.8.10]` -> `s*s@[*.*.*.*]`
 * `"multi....dot"@[IPv6:2001:db8:85a3:8d3:1319:8a2e:370:7348]` -> `"m*t"@[IPv6:***********]`
 
-Configure the symbol by providing the optional parameter, e.g.: `ANONYMIZE_EMAILS=smart?mask_symbol=#`
+Configuration parameters:
+
+| Property         | Default value | Required | Description |
+|------------------|---------------|----------|-------------|
+| `mask_symbol`    | `*`           | no       | Mask symbol to use instead of replaced characters |
 
 ##### The `paranoid` filter
 
 The paranoid filter works similar to smart filter but will:
 
 * Replace the local part with **ONE** asterisk
-* Replace the domain part (sans TLD) with **ONE asterisk
+* Replace the domain part (sans TLD) with **ONE** asterisk
 
 E.g.:
 
@@ -381,35 +392,43 @@ E.g.:
 * `s@[192.168.8.10]` -> `*@[*]`
 * `"multi....dot"@[IPv6:2001:db8:85a3:8d3:1319:8a2e:370:7348]` -> `*@[IPv6:*]`
 
-##### The `noop` filter
+Configuration parameters:
 
-This filter doesn't do anything. It's used for testing purposes only.
+| Property         | Default value | Required | Description |
+|------------------|---------------|----------|-------------|
+| `mask_symbol`    | `*`           | no       | Mask symbol to use instead of replaced characters |
 
 ##### The `hash` filter
 
-This filter will replace the email with the salted (HMAC) hash.
+This filter will replace the email with the salted (HMAC - SHA256) hash. While it makes the logs much less readable, it has one specific benefit:
+it allows you to search through the logs if you know the email address you're looking for. You are able to calculate the hash yourself
+and then grep through the logs for this specific email address.
 
 E.g.:
 
 * `prettyandsimple@example.com` -> `<3052a860ddfde8b50e39843d8f1c9f591bec442823d97948b811d38779e2c757>` for (`ANONYMIZE_EMAILS=hash?salt=hello%20world`)
 * `prettyandsimple@example.com` -> `c58731d3@8bd7a35c` for (`ANONYMIZE_EMAILS=hash?salt=hello%20world&split=true&short_sha=t&prefix=&suffix=`)
 
-Filter will not work without configuration. You will need to provide (at least) the salt, e.g.:
+Filter will not work without configuration. You will need to provide (at least) the salt, e.g.: `ANONYMIZE_EMAILS=hash?salt=demo`
 
-`ANONYMIZE_EMAILS=hash?salt=demo[&prefix=][&suffix=][&split=<T|F>][&short_sha=<T|F>][&case_sensitive=<T|F>]`
+Configuration parameters:
 
 | Property         | Default value | Required | Description |
 |------------------|---------------|----------|-------------|
 | `salt`           | none          | **yes**  | HMAC key (salt) used for calculating the checksum |
-| `prefix`         | `<`           | no       | Prefix of emails in the log (for easier grepping) |
-| `suffix`         | `>`           | no       | Suffix of emails in the log (for easier grepping) |
+| `prefix`         | ``            | no       | Prefix of emails in the log (for easier grepping) |
+| `suffix`         | ``            | no       | Suffix of emails in the log (for easier grepping) |
 | `split`          | `false`       | no       | Set to `1`, `t` or `true` to hash separately the local and the domain part |
 | `short_sha`      | `false`       | no       | Set to `1`, `t` or `true` to return just the first 8 characters of the hash |
 | `case_sensitive` | `true`        | no       | Set to `0`, `f` or `false` to convert email to lowercase before hashing |
 
+##### The `noop` filter
+
+This filter doesn't do anything. It's used for testing purposes only.
+
 ##### Writting your own filters
 
-It's easy enough to write your own filters. The simplest way would be to take the `email-anonymizer.py` filte in this
+It's easy enough to write your own filters. The simplest way would be to take the `email-anonymizer.py` file in this
 image, write your own and then attach it to the container image under `/scripts`. If you're feeling adentorous, you can
 also install your own Python package -- the script will automatically pick up the class name.
 

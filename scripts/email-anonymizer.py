@@ -33,14 +33,9 @@ logger = logging.getLogger(__name__)
 # This pattern below, should, however match anything that remotely looks like an email.
 # It is too broad, though, as it will match things which are not considered valid email
 # addresses as well. But for our use case, that's OK and more than sufficient.
-EMAIL_CATCH_ALL_PATTERN = '([^ "\\[\\]<>]+|".+")@(\[([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+|[A-Za-z0-9]+:.+)\]|([^ \\{}():;]+(\.[^ \\{}():;]+)*))'
+EMAIL_CATCH_ALL_PATTERN = '([^ "\\[\\]<]+|".+")@(\[([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+|[A-Za-z0-9]+:.+)\]|([^ \\{}():;>]+(\.[^ \\{}():;]+)*))'
 EMAIL_CATCH_ALL = re.compile(EMAIL_CATCH_ALL_PATTERN)
 EMPTY_RESPONSE = json.dumps({})
-
-# Postfix formats message IDs like this: 20211207101128.0805BA272@31bfa77a2cab
-# Let's not mask them.
-MESSAGE_ID_PATTERN = '[0-9]+\.[0-9A-F]+@[0-9a-f]+'
-MESSAGE_ID = re.compile(MESSAGE_ID_PATTERN)
 
 """A default filter, if none other is provided."""
 DEFAULT_FILTER_CLASS: str = 'SmartFilter'
@@ -80,15 +75,46 @@ def is_truthy(val: any, name: str) -> bool:
 Abstract base for all filters. Does nothing.
 """
 class Filter():
+    MESSAGE_ID_LINE = "message-id="
+    MESSAGE_ID_LINE_LEN = len(MESSAGE_ID_LINE)
+
     def init(self, args: 'dict[str, list[str]]') -> None:
         pass
 
-    def replace(self, match: re.match) -> str:
+    def is_message_id(self, match: re.match, msg: str) -> bool:
+        start = match.start()
+        email = match.group()
+
+        # Note that our regex will match thigs like "message-id=Issue1649523226559@postfix-mail.mail-system.svc.cluster.local"
+        # so we need to filter / check for these first
+
+        if email.startswith(self.MESSAGE_ID_LINE):
+            return True
+        
+        if start >= self.MESSAGE_ID_LINE_LEN:
+            pos = start-1
+            while True:
+                char = msg[pos]
+                if char == '=':
+                    break
+                elif char in '{<["\'':
+                    pos = pos - 1
+                    continue
+
+                return False
+
+            check = msg[pos-self.MESSAGE_ID_LINE_LEN+1:pos+1]
+            if check == self.MESSAGE_ID_LINE:
+                return True
+
+        return False
+
+    def replace(self, match: re.match, msg: str) -> str:
         return match.group()
 
     def processMessage(self, msg: str) -> typing.Optional[str]:
         result = EMAIL_CATCH_ALL.sub(
-            lambda x: self.replace(x), msg
+            lambda x: self.replace(x, msg), msg
         )
         return json.dumps({'msg': result}, ensure_ascii=False) if result != msg else EMPTY_RESPONSE
 
@@ -136,7 +162,7 @@ class SmartFilter(Filter):
                 left, right = domain.split(":", 1)
                 return left + ':' + (len(right)-1) * self.mask_symbol + ']'
             else:
-                return '[*.*.*.*]'
+                return '[' + self.mask_symbol + '.' + self.mask_symbol + '.' + self.mask_symbol + '.' + self.mask_symbol + ']'
         elif '.' in domain: # Normal domain
             s, tld = domain.rsplit('.', 1)
             return len(s) * self.mask_symbol  + '.' + tld
@@ -144,11 +170,11 @@ class SmartFilter(Filter):
         else: # Local domain
             return len(domain) * self.mask_symbol
 
-    def replace(self, match: re.match) -> str:
+    def replace(self, match: re.match, msg: str) -> str:
         email = match.group()
 
         # Return the details unchanged if they look like Postfix message ID
-        if bool(MESSAGE_ID.match(email)):
+        if self.is_message_id(match, msg):
             return email
 
         # The "@" can show up in the local part, but shouldn't appear in the
@@ -197,14 +223,14 @@ class ParanoidFilter(SmartFilter):
 # -------------------------------------------------------------------------------- #
 
 """
-HashFilter will replace the email with it's hash. This should allow you to grep through
-the logs by hashing the email address yourself, while retaining the anononymity.
+HashFilter will replace the email with its hash. This should allow you to grep through
+the logs by hashing the email address yourself, while retaining the anonymity.
 
-HashFilter uses HMAC to hash addresses, so make sure you inject your unique salt. This
-way, the calculated hashes will be different accross organizations, though providing
-complete anonimity.
+HashFilter uses HMAC to hash addresses (SHA256), so make sure you inject your unique salt. 
+This way, the calculated hashes will be different accross organizations, though providing
+complete anonymity.
 
-Notice that for IP addreses hashes are not appropriate, the set of IP addresses is 
+Notice that for IP addresses hashes are not appropriate, the set of IP addresses is 
 limited and rainbow tables could be used to get back IP addresses. This is not possible
 with emails.
 
@@ -212,15 +238,15 @@ IANAL, though, so your mileage my vary.
 
 """
 class HashFilter(Filter):
-    prefix: str = '<'            # Prefix emails with this (set of) character(s) for easier grepping
-    suffix: str = '>'            # Suffix emails with this (set of) character(s) for easier grepping
+    prefix: str = ''            # Prefix emails with this (set of) character(s) for easier grepping
+    suffix: str = ''            # Suffix emails with this (set of) character(s) for easier grepping
     case_sensitive: bool = True  # Convert strings to lowercase if false
     short_sha: bool = False      # Cut the string to first 8 characters
     split: bool = False          # Split and anonymize local and domain part independently
     
     def init(self, args: 'dict[str, list[str]]') -> None:
         if 'salt' in args and len(args['salt']) > 0:
-            self.byte_key = bytes(args['salt'][0], 'UTF-8')
+            self.salt_encoded = args['salt'][0].encode()
         else:
             raise ValueError("You need to specify salt with this filter!")
 
@@ -237,11 +263,11 @@ class HashFilter(Filter):
 
         super().init(args)
 
-    def replace(self, match: re.match) -> str:
+    def replace(self, match: re.match, msg: str) -> str:
         email = match.group()
 
         # Return the details unchanged if they look like Postfix message ID
-        if bool(MESSAGE_ID.match(email)):
+        if self.is_message_id(match, msg):
             return email
 
         if not self.case_sensitive:
@@ -252,8 +278,8 @@ class HashFilter(Filter):
             # domain part (at least not that we know).
             local, domain = email.rsplit("@", 1)
 
-            local = hmac.new(self.byte_key, local.encode(), hashlib.sha256).hexdigest()
-            domain = hmac.new(self.byte_key, domain.encode(), hashlib.sha256).hexdigest()
+            local = hmac.new(self.salt_encoded, local.encode(), hashlib.sha256).hexdigest()
+            domain = hmac.new(self.salt_encoded, domain.encode(), hashlib.sha256).hexdigest()
 
             if self.short_sha:
                 local = local[:8]
@@ -262,7 +288,7 @@ class HashFilter(Filter):
             email = local + "@" + domain
 
         else:
-            email = hmac.new(self.byte_key, email.encode(), hashlib.sha256).hexdigest()
+            email = hmac.new(self.salt_encoded, email.encode(), hashlib.sha256).hexdigest()
             if self.short_sha:
                 email = email[:8]
 

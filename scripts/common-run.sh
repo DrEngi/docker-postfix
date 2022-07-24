@@ -45,7 +45,7 @@ anon_email_log() {
 		}
 		' /etc/rsyslog.conf
 	else
-		info "Emails in the logs will not be anonymized. Set ${emphasis}ANONYMIZE_EMAILS${reset} to enable this feature."
+		notice "Emails in the logs will not be anonymized. Set ${emphasis}ANONYMIZE_EMAILS${reset} to enable this feature."
 	fi
 }
 
@@ -71,9 +71,29 @@ setup_conf() {
 }
 
 reown_folders() {
-	mkdir -p /var/spool/postfix/pid /var/spool/postfix/dev
-	chown root: /var/spool/postfix/
-	chown root: /var/spool/postfix/pid
+	mkdir -p /var/spool/postfix/pid /var/spool/postfix/dev /var/spool/postfix/private /var/spool/postfix/public 
+	if [[ "${SKIP_ROOT_SPOOL_CHOWN}" == "1" ]]; then
+		warn "${emphasis}SKIP_ROOT_SPOOL_CHOWN${reset} is set. Script will not chown ${emphasis}/var/spool/postfix/${reset}. Make sure you know what you're doing."
+	else
+		debug "Reowing ${emphasis}root: /var/spool/postfix/${reset}"
+		if ! chown root: /var/spool/postfix/; then
+			warn "Cannot reown ${emphasis}root:${reset} for ${emphasis}/var/spool/postfix/${reset}. Your installation might be broken."
+		fi
+
+		debug "Reowing ${emphasis}root: /var/spool/postfix/pid/${reset}"
+		if ! chown root: /var/spool/postfix/pid; then
+			warn "Cannot reown ${emphasis}root:${reset} for ${emphasis}/var/spool/postfix/pid/${reset}. Your installation might be broken."
+		fi
+	fi
+
+	debug "Reowing ${emphasis}postfix:postdrop /var/spool/postfix/private/${reset}"
+	if ! chown -R postfix:postdrop /var/spool/postfix/private; then
+		warn "Cannot reown ${emphasis}postfix:postdrop${reset} for ${emphasis}/var/spool/postfix/private${reset}. Your installation might be broken."
+	fi
+	debug "Reowing ${emphasis}postfix:postdrop /var/spool/postfix/public/${reset}"
+	if ! chown -R postfix:postdrop /var/spool/postfix/public; then
+		warn "Cannot reown ${emphasis}postfix:postdrop${reset} for ${emphasis}/var/spool/postfix/public${reset}. Your installation might be broken."
+	fi
 
 	do_postconf -e "manpage_directory=/usr/share/man"
 
@@ -199,8 +219,8 @@ postfix_setup_relayhost() {
 		if [ -n "$RELAYHOST_USERNAME" ] && [ -n "$RELAYHOST_PASSWORD" ]; then
 			echo -e " using username ${emphasis}$RELAYHOST_USERNAME${reset} and password ${emphasis}(redacted)${reset}."
 			if [[ -f /etc/postfix/sasl_passwd ]]; then
-				if ! grep -F "$SASL_RELAYHOST $RELAYHOST_USERNAME:$RELAYHOST_PASSWORD" /etc/postfix/sasl_passwd; then
-					sed -i -e "s/^$SASL_RELAYHOST .*$/d" /etc/postfix/sasl_passwd
+				if ! grep -q -F "$SASL_RELAYHOST $RELAYHOST_USERNAME:$RELAYHOST_PASSWORD" /etc/postfix/sasl_passwd; then
+					sed -i -e "/^$SASL_RELAYHOST .*$/d" /etc/postfix/sasl_passwd
 					echo "$SASL_RELAYHOST $RELAYHOST_USERNAME:$RELAYHOST_PASSWORD" >> /etc/postfix/sasl_passwd
 				fi
 			else
@@ -244,6 +264,9 @@ EOF
 			exit 1
 		fi
 
+		# Note that this is not an error. sasl-xoauth2 expect the password to be stored
+		# in a file, which is referenced by the smtp_sasl_password_maps file.
+		export RELAYHOST_PASSWORD_FILENAME=""
 		export RELAYHOST_PASSWORD="/var/spool/postfix/xoauth2-tokens/${RELAYHOST_USERNAME}"
 
 		if [ ! -d "/var/spool/postfix/xoauth2-tokens" ]; then
@@ -264,10 +287,22 @@ EOF
 }
 
 postfix_setup_xoauth2_post_setup() {
+	local other_plugins
 	if [ -n "$XOAUTH2_CLIENT_ID" ] && [ -n "$XOAUTH2_SECRET" ]; then
 		do_postconf -e 'smtp_sasl_security_options='
 		do_postconf -e 'smtp_sasl_mechanism_filter=xoauth2'
 		do_postconf -e 'smtp_tls_session_cache_database=lmdb:${data_directory}/smtp_scache'
+	else
+		# So, this fix should solve the issue #106, when password in the 'smtp_sasl_password_maps' was
+		# read as file instead of the actual password. It turns out that  the culprit is the sasl-xoauth2
+		# plugin, which expect the filename in place of the password. And as the plugin injects itself
+		# automatically in the list of SASL login mechanisms, it tries to read the password as a file and --
+		# naturally -- fails.
+		# 
+		# The fix is therefore simple: If we're not using OAuth2, we remove the plugin from the list and
+		# keep all the plugins installed.
+		other_plugins="$(pluginviewer -c | grep Plugin | cut -d\  -f2 | cut -c2- | rev | cut -c2- | rev | grep -v EXTERNAL | grep -v sasl-xoauth2 | tr '\n' ',' | rev | cut -c2- | rev)"
+		do_postconf -e "smtp_sasl_mechanism_filter=${other_plugins}"
 	fi
 }
 
